@@ -16,7 +16,8 @@ st.set_page_config(
 )
 
 MODEL_NAME = "llama-3.1-70b-versatile"
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+#GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_KEY = st.secrets.get("groq", {}).get("key")
 
 # ============================
 # Initialize Clients
