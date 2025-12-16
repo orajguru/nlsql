@@ -3,7 +3,6 @@ import pandas as pd
 from groq import Groq
 from sqlalchemy import create_engine, text
 import os
-import re
 import hashlib
 
 # ============================
@@ -16,7 +15,6 @@ st.set_page_config(
 )
 
 MODEL_NAME = "llama-3.1-8b-instant"
-#GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_API_KEY = st.secrets.get("groq", {}).get("key")
 
 # ============================
@@ -51,7 +49,6 @@ Guidelines:
 - Use departments.name for grouping and display
 """
 
-ALLOWED_TABLES = {"employees", "departments"}
 MAX_ROWS = 1000
 FORBIDDEN_KEYWORDS = ["insert", "update", "delete", "drop", "alter", "truncate", "create"]
 
@@ -66,9 +63,25 @@ def semantic_key(question: str) -> str:
     return hashlib.sha256(question.lower().encode()).hexdigest()
 
 # ============================
+# DB Introspection Helpers
+# ============================
+def list_tables():
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';"
+        )).fetchall()
+    return [r[0] for r in rows]
+
+
+def describe_table(table_name: str):
+    with engine.connect() as conn:
+        rows = conn.execute(text(f"PRAGMA table_info({table_name});")).fetchall()
+    return rows
+
+# ============================
 # Helpers
 # ============================
-def validate_sql(sql):
+def validate_sql(sql: str) -> str:
     sql_l = sql.lower()
     if not sql_l.startswith("select"):
         raise ValueError("Only SELECT queries allowed")
@@ -80,16 +93,16 @@ def validate_sql(sql):
     return sql
 
 
-def generate_sql(nl, history):
+def generate_sql(nl: str, history: list) -> str:
     messages = [
         {"role": "system", "content": "You are a senior analytics engineer generating SQL with joins."},
         {"role": "system", "content": "Rules: Use joins based on relationships. Output only SQL. SELECT only."},
         {"role": "system", "content": f"Schema:\n{SCHEMA_DESCRIPTION}"}
     ]
 
+    # Use last 4 chat turns for context (chat-only memory)
     for h in history[-4:]:
-        messages.append({"role": "user", "content": h["content"]})
-        #messages.append({"role": "assistant", "content": h["sql"]})
+        messages.append({"role": h["role"], "content": h["content"]})
 
     messages.append({"role": "user", "content": nl})
 
@@ -101,7 +114,7 @@ def generate_sql(nl, history):
     return res.choices[0].message.content.strip()
 
 
-def explain_sql(sql):
+def explain_sql(sql: str) -> str:
     res = client.chat.completions.create(
         model=MODEL_NAME,
         messages=[
@@ -113,7 +126,7 @@ def explain_sql(sql):
     return res.choices[0].message.content
 
 
-def explain_chart(df, chart_type, x, y):
+def explain_chart(df: pd.DataFrame, chart_type: str, x: str, y: str) -> str:
     sample = df.head(5).to_csv(index=False)
     prompt = f"""
 Explain this chart in business terms.
@@ -131,7 +144,7 @@ Sample data:
     return res.choices[0].message.content
 
 
-def auto_chart(df):
+def auto_chart(df: pd.DataFrame):
     num_cols = df.select_dtypes(include="number").columns
     cat_cols = df.select_dtypes(exclude="number").columns
     if len(num_cols) >= 1 and len(cat_cols) >= 1:
@@ -159,8 +172,40 @@ for msg in st.session_state.messages:
 user_input = st.chat_input("Ask a question about your data")
 
 if user_input:
+    lowered = user_input.lower().strip()
     st.session_state.messages.append({"role": "user", "content": user_input})
 
+    # ============================
+    # Special chat commands (no LLM)
+    # ============================
+    if lowered in {"what tables do i have?", "list tables", "show tables"}:
+        tables = list_tables()
+        with st.chat_message("assistant"):
+            if tables:
+                st.markdown("### 📂 Available Tables")
+                for t in tables:
+                    st.markdown(f"- **{t}**")
+            else:
+                st.markdown("No tables found in the database.")
+        st.session_state.messages.append({"role": "assistant", "content": "Listed database tables"})
+        st.stop()
+
+    if lowered.startswith("describe table"):
+        table = lowered.replace("describe table", "").strip()
+        cols = describe_table(table)
+        with st.chat_message("assistant"):
+            if cols:
+                st.markdown(f"### 🧱 Schema for `{table}`")
+                for c in cols:
+                    st.markdown(f"- **{c[1]}** ({c[2]})")
+            else:
+                st.markdown(f"Table `{table}` not found.")
+        st.session_state.messages.append({"role": "assistant", "content": f"Described table {table}"})
+        st.stop()
+
+    # ============================
+    # Normal NL → SQL flow
+    # ============================
     try:
         cache_key = semantic_key(user_input)
 
