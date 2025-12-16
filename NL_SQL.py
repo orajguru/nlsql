@@ -165,35 +165,47 @@ def sqlite_sql_fixups(sql: str) -> str:
     return sql
 
 def extract_sql(llm_output: str) -> str:
-    """
-    Extract the first SELECT or WITH statement from LLM output.
-    """
+    llm_output = llm_output.strip()
+
+    # If model already returned clean SQL
+    if llm_output.lower().startswith(("select", "with")):
+        return llm_output
+
+    # Try to extract SQL block
     match = re.search(
-        r"(with\\s+.*?select|select\\s+.*)",
+        r"(select\\s+.+?;|with\\s+.+?;)",
         llm_output,
         flags=re.IGNORECASE | re.DOTALL
     )
 
-    if not match:
-        raise ValueError("No valid SELECT query found in model output")
+    if match:
+        return match.group(1).strip()
 
-    return match.group(0).strip()
+    raise ValueError("Model did not return SQL. Try rephrasing the question.")
+
 
 
 
 def generate_sql(nl: str, history: list) -> str:
-    messages = [
+    messages = messages = [
     {
         "role": "system",
         "content": (
-            "You are a senior analytics engineer generating SQL for SQLITE.\n"
-            "IMPORTANT SQLITE RULES:\n"
-            "- SQLite does NOT support EXTRACT()\n"
+            "You are an expert data engineer.\n"
+            "You MUST return ONLY a valid SQLite SQL query.\n"
+            "Do NOT explain.\n"
+            "Do NOT add comments.\n"
+            "Do NOT add markdown.\n"
+            "Do NOT add any text before or after SQL.\n"
+            "\n"
+            "SQLite rules:\n"
             "- Use strftime('%Y', date_column) for year extraction\n"
-            "- Use strftime('%m', date_column) for month extraction\n"
-            "- Dates are stored as TEXT in YYYY-MM-DD format\n"
-            "- Output only valid SQLite SQL\n"
-            "- SELECT queries only"
+            "- Dates are TEXT in YYYY-MM-DD format\n"
+            "- SELECT or WITH queries only\n"
+            "- No EXTRACT(), no other dialects\n"
+            "\n"
+            "If you cannot generate SQL, return:\n"
+            "SELECT 'ERROR: cannot generate SQL' AS error;"
         )
     },
     {
@@ -201,6 +213,7 @@ def generate_sql(nl: str, history: list) -> str:
         "content": f"Schema:\n{SCHEMA_DESCRIPTION}"
     }
 ]
+
 
     # Use last 4 chat turns for context (chat-only memory)
     for h in history[-4:]:
