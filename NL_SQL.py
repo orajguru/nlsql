@@ -89,7 +89,7 @@ def generate_sql(nl, history):
 
     for h in history[-4:]:
         messages.append({"role": "user", "content": h["content"]})
-        messages.append({"role": "assistant", "content": h["sql"]})
+        #messages.append({"role": "assistant", "content": h["sql"]})
 
     messages.append({"role": "user", "content": nl})
 
