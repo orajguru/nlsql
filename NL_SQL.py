@@ -1,4 +1,4 @@
-import streamlit as st
+_import streamlit as st
 import pandas as pd
 from groq import Groq
 from sqlalchemy import create_engine, text
@@ -86,14 +86,14 @@ Tables:
 
 employees
 - id (INTEGER, PK)
-- name (TEXT)
+- emp_name (TEXT)
 - department_id (INTEGER, FK → departments.id)
 - salary (INTEGER)
 - joining_date (DATE)
 
  departments
 - id (INTEGER, PK)
-- name (TEXT)
+- dept_name (TEXT)
 
 Relationships:
 - employees.department_id joins to departments.id
