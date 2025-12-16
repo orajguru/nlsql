@@ -32,14 +32,14 @@ def init_db():
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS departments (
                 id INTEGER PRIMARY KEY,
-                name TEXT NOT NULL
+                dept_name TEXT NOT NULL
             );
         """))
 
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS employees (
                 id INTEGER PRIMARY KEY,
-                name TEXT NOT NULL,
+                emp_name TEXT NOT NULL,
                 department_id INTEGER,
                 salary INTEGER,
                 joining_date DATE,
@@ -51,7 +51,7 @@ def init_db():
         dept_count = conn.execute(text("SELECT COUNT(*) FROM departments")).scalar()
         if dept_count == 0:
             conn.execute(text("""
-                INSERT INTO departments (id, name) VALUES
+                INSERT INTO departments (id, dept_name) VALUES
                 (1, 'IT'),
                 (2, 'HR'),
                 (3, 'Finance'),
@@ -62,7 +62,7 @@ def init_db():
         emp_count = conn.execute(text("SELECT COUNT(*) FROM employees")).scalar()
         if emp_count == 0:
             conn.execute(text("""
-                INSERT INTO employees (name, department_id, salary, joining_date) VALUES
+                INSERT INTO employees (emp_name, department_id, salary, joining_date) VALUES
                 ('Alice', 1, 120000, '2021-04-12'),
                 ('Bob', 1, 95000, '2022-06-01'),
                 ('Carol', 2, 60000, '2023-02-18'),
