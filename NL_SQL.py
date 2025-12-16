@@ -137,15 +137,22 @@ def describe_table(table_name: str):
 # Helpers
 # ============================
 def validate_sql(sql: str) -> str:
-    sql_l = sql.lower()
-    if not sql_l.startswith("select"):
+    sql_clean = sql.strip().lower()
+
+    # Allow SELECT or WITH (CTE leading to SELECT)
+    if not (sql_clean.startswith("select") or sql_clean.startswith("with")):
         raise ValueError("Only SELECT queries allowed")
+
     for kw in FORBIDDEN_KEYWORDS:
-        if kw in sql_l:
+        if re.search(rf"\\b{kw}\\b", sql_clean):
             raise ValueError(f"Forbidden keyword: {kw}")
-    if "limit" not in sql_l:
+
+    # Enforce LIMIT for SQLite
+    if "limit" not in sql_clean:
         sql += f" LIMIT {MAX_ROWS}"
+
     return sql
+
 
 def sqlite_sql_fixups(sql: str) -> str:
     # Replace EXTRACT(YEAR FROM col) → strftime('%Y', col)
