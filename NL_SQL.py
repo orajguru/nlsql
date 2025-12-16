@@ -9,7 +9,7 @@ import re
 # Configuration
 # ============================
 st.set_page_config(
-    page_title="NL → SQL Analytics Copilot",
+    page_title="NL → SQL Analytics Copilot (No Column Clash)",
     page_icon="📊",
     layout="wide"
 )
@@ -24,37 +24,44 @@ client = Groq(api_key=GROQ_API_KEY)
 engine = create_engine("sqlite:///sample.db")
 
 # ============================
-# Initialize Database (tables + sample data)
+# Initialize Database (NO CLASH schema)
 # ============================
 def init_db():
     with engine.begin() as conn:
+        # Department table with prefixed columns
         conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS departments (
-                id INTEGER PRIMARY KEY,
-                dept_name TEXT NOT NULL
+            CREATE TABLE IF NOT EXISTS dim_department (
+                dept_id INTEGER PRIMARY KEY,
+                department_name TEXT NOT NULL
             );
         """))
 
+        # Employee table with prefixed columns
         conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS employees (
-                id INTEGER PRIMARY KEY,
-                emp_name TEXT NOT NULL,
-                department_id INTEGER,
-                salary INTEGER,
+            CREATE TABLE IF NOT EXISTS fact_employee (
+                emp_id INTEGER PRIMARY KEY,
+                employee_name TEXT NOT NULL,
+                dept_id INTEGER,
+                employee_salary INTEGER,
                 joining_date DATE,
-                FOREIGN KEY(department_id) REFERENCES departments(id)
+                FOREIGN KEY(dept_id) REFERENCES dim_department(dept_id)
             );
         """))
 
-        if conn.execute(text("SELECT COUNT(*) FROM departments")).scalar() == 0:
+        # Seed departments
+        if conn.execute(text("SELECT COUNT(*) FROM dim_department")).scalar() == 0:
             conn.execute(text("""
-                INSERT INTO departments (id, dept_name) VALUES
-                (1, 'IT'), (2, 'HR'), (3, 'Finance'), (4, 'Operations');
+                INSERT INTO dim_department (dept_id, department_name) VALUES
+                (1, 'IT'),
+                (2, 'HR'),
+                (3, 'Finance'),
+                (4, 'Operations');
             """))
 
-        if conn.execute(text("SELECT COUNT(*) FROM employees")).scalar() == 0:
+        # Seed employees
+        if conn.execute(text("SELECT COUNT(*) FROM fact_employee")).scalar() == 0:
             conn.execute(text("""
-                INSERT INTO employees (emp_name, department_id, salary, joining_date) VALUES
+                INSERT INTO fact_employee (employee_name, dept_id, employee_salary, joining_date) VALUES
                 ('Alice', 1, 120000, '2021-04-12'),
                 ('Bob', 1, 95000, '2022-06-01'),
                 ('Carol', 2, 60000, '2023-02-18'),
@@ -66,30 +73,29 @@ def init_db():
 init_db()
 
 # ============================
-# Schema (STRICT – aliased output)
+# Schema (NO CLASH, CANONICAL)
 # ============================
 SCHEMA_DESCRIPTION = """
 Tables:
 
-employees
-- id
-- emp_name
-- department_id
-- salary
+fact_employee
+- emp_id (PK)
+- employee_name
+- dept_id (FK → dim_department.dept_id)
+- employee_salary
 - joining_date
 
-departments
-- id
-- dept_name
+dim_department
+- dept_id (PK)
+- department_name
 
 Relationships:
-- employees.department_id → departments.id
+- fact_employee.dept_id → dim_department.dept_id
 
-CRITICAL OUTPUT RULES:
-- ALWAYS alias employees.emp_name AS employee_name
-- ALWAYS alias departments.dept_name AS department_name
-- ALWAYS alias employees.salary AS employee_salary
-- NEVER output raw column names without aliases
+RULES:
+- NEVER invent columns
+- Use names exactly as defined
+- Aliases are OPTIONAL (names are already unique)
 """
 
 MAX_ROWS = 1000
@@ -145,13 +151,9 @@ def generate_sql(nl: str, history: list) -> str:
             "role": "system",
             "content": (
                 "You are a SQLite SQL generator.\n"
-                "Return ONLY SQL.\n"
-                "NO explanations.\n"
-                "NO markdown.\n"
-                "STRICTLY enforce column aliases:\n"
-                "employees.emp_name AS employee_name\n"
-                "departments.dept_name AS department_name\n"
-                "employees.salary AS employee_salary"
+                "Return ONLY valid SQL.\n"
+                "Use ONLY the tables and columns exactly as defined.\n"
+                "Do NOT invent names."
             )
         },
         {"role": "system", "content": f"Schema:\n{SCHEMA_DESCRIPTION}"}
@@ -177,7 +179,7 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 st.title("🤖 Analytics Copilot")
-st.caption("Clean, aliased analytics results")
+st.caption("No column clashes by design")
 
 for m in st.session_state.messages:
     with st.chat_message(m["role"]):
