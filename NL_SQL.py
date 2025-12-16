@@ -15,7 +15,7 @@ st.set_page_config(
     layout="wide"
 )
 
-MODEL_NAME = "llama-3.1-70b-instant"
+MODEL_NAME = "llama-3.1-8b-instant"
 #GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_API_KEY = st.secrets.get("groq", {}).get("key")
 
