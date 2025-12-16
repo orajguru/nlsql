@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from groq import Groq
 from sqlalchemy import create_engine, text
-import os
 import hashlib
 import re
 
@@ -47,20 +46,13 @@ def init_db():
             );
         """))
 
-        # Seed departments if empty
-        dept_count = conn.execute(text("SELECT COUNT(*) FROM departments")).scalar()
-        if dept_count == 0:
+        if conn.execute(text("SELECT COUNT(*) FROM departments")).scalar() == 0:
             conn.execute(text("""
                 INSERT INTO departments (id, dept_name) VALUES
-                (1, 'IT'),
-                (2, 'HR'),
-                (3, 'Finance'),
-                (4, 'Operations');
+                (1, 'IT'), (2, 'HR'), (3, 'Finance'), (4, 'Operations');
             """))
 
-        # Seed employees if empty
-        emp_count = conn.execute(text("SELECT COUNT(*) FROM employees")).scalar()
-        if emp_count == 0:
+        if conn.execute(text("SELECT COUNT(*) FROM employees")).scalar() == 0:
             conn.execute(text("""
                 INSERT INTO employees (emp_name, department_id, salary, joining_date) VALUES
                 ('Alice', 1, 120000, '2021-04-12'),
@@ -71,37 +63,33 @@ def init_db():
                 ('Frank', 1, 110000, '2023-01-20');
             """))
 
-# Run DB initialization once
 init_db()
 
 # ============================
-client = Groq(api_key=GROQ_API_KEY)
-engine = create_engine("sqlite:///sample.db")
-
-# ============================
-# Schema with FK inference
+# Schema (STRICT – aliased output)
 # ============================
 SCHEMA_DESCRIPTION = """
 Tables:
 
 employees
-- id (INTEGER, PK)
-- emp_name (TEXT)
-- department_id (INTEGER, FK → departments.id)
-- salary (INTEGER)
-- joining_date (DATE)
+- id
+- emp_name
+- department_id
+- salary
+- joining_date
 
- departments
-- id (INTEGER, PK)
-- dept_name (TEXT)
+departments
+- id
+- dept_name
 
 Relationships:
-- employees.department_id joins to departments.id
+- employees.department_id → departments.id
 
-Guidelines:
-- Always use explicit JOINs
-- Prefer table aliases (e, d)
-- Use departments.name for grouping and display
+CRITICAL OUTPUT RULES:
+- ALWAYS alias employees.emp_name AS employee_name
+- ALWAYS alias departments.dept_name AS department_name
+- ALWAYS alias employees.salary AS employee_salary
+- NEVER output raw column names without aliases
 """
 
 MAX_ROWS = 1000
@@ -118,104 +106,57 @@ def semantic_key(question: str) -> str:
     return hashlib.sha256(question.lower().encode()).hexdigest()
 
 # ============================
-# DB Introspection Helpers
-# ============================
-def list_tables():
-    with engine.connect() as conn:
-        rows = conn.execute(text(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';"
-        )).fetchall()
-    return [r[0] for r in rows]
-
-
-def describe_table(table_name: str):
-    with engine.connect() as conn:
-        rows = conn.execute(text(f"PRAGMA table_info({table_name});")).fetchall()
-    return rows
-
-# ============================
 # Helpers
 # ============================
 def validate_sql(sql: str) -> str:
-    sql_clean = sql.strip().lower()
-
-    # Allow SELECT or WITH (CTE leading to SELECT)
-    if not (sql_clean.startswith("select") or sql_clean.startswith("with")):
+    s = sql.strip().lower()
+    if not (s.startswith("select") or s.startswith("with")):
         raise ValueError("Only SELECT queries allowed")
-
     for kw in FORBIDDEN_KEYWORDS:
-        if re.search(rf"\\b{kw}\\b", sql_clean):
+        if re.search(rf"\b{kw}\b", s):
             raise ValueError(f"Forbidden keyword: {kw}")
-
-    # Enforce LIMIT for SQLite
-    if "limit" not in sql_clean:
+    if "limit" not in s:
         sql += f" LIMIT {MAX_ROWS}"
-
     return sql
 
 
 def sqlite_sql_fixups(sql: str) -> str:
-    # Replace EXTRACT(YEAR FROM col) → strftime('%Y', col)
-    sql = re.sub(
-        r"EXTRACT\\s*\\(\\s*YEAR\\s+FROM\\s+([^)]+)\\)",
-        r"strftime('%Y', \\1)",
+    return re.sub(
+        r"EXTRACT\s*\(\s*YEAR\s+FROM\s+([^)]+)\)",
+        r"strftime('%Y', \1)",
         sql,
         flags=re.IGNORECASE
     )
-    return sql
-
-def extract_sql(llm_output: str) -> str:
-    llm_output = llm_output.strip()
-
-    # If model already returned clean SQL
-    if llm_output.lower().startswith(("select", "with")):
-        return llm_output
-
-    # Try to extract SQL block
-    match = re.search(
-        r"(select\\s+.+?;|with\\s+.+?;)",
-        llm_output,
-        flags=re.IGNORECASE | re.DOTALL
-    )
-
-    if match:
-        return match.group(1).strip()
-
-    raise ValueError("Model did not return SQL. Try rephrasing the question.")
 
 
+def extract_sql(text_out: str) -> str:
+    text_out = text_out.strip()
+    if text_out.lower().startswith(("select", "with")):
+        return text_out
+    m = re.search(r"(select\s+.+|with\s+.+)", text_out, re.I | re.S)
+    if not m:
+        raise ValueError("No valid SQL returned by model")
+    return m.group(1).strip()
 
 
 def generate_sql(nl: str, history: list) -> str:
-    messages = messages = [
-    {
-        "role": "system",
-        "content": (
-            "You are an expert data engineer.\n"
-            "You MUST return ONLY a valid SQLite SQL query.\n"
-            "Do NOT explain.\n"
-            "Do NOT add comments.\n"
-            "Do NOT add markdown.\n"
-            "Do NOT add any text before or after SQL.\n"
-            "\n"
-            "SQLite rules:\n"
-            "- Use strftime('%Y', date_column) for year extraction\n"
-            "- Dates are TEXT in YYYY-MM-DD format\n"
-            "- SELECT or WITH queries only\n"
-            "- No EXTRACT(), no other dialects\n"
-            "\n"
-            "If you cannot generate SQL, return:\n"
-            "SELECT 'ERROR: cannot generate SQL' AS error;"
-        )
-    },
-    {
-        "role": "system",
-        "content": f"Schema:\n{SCHEMA_DESCRIPTION}"
-    }
-]
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a SQLite SQL generator.\n"
+                "Return ONLY SQL.\n"
+                "NO explanations.\n"
+                "NO markdown.\n"
+                "STRICTLY enforce column aliases:\n"
+                "employees.emp_name AS employee_name\n"
+                "departments.dept_name AS department_name\n"
+                "employees.salary AS employee_salary"
+            )
+        },
+        {"role": "system", "content": f"Schema:\n{SCHEMA_DESCRIPTION}"}
+    ]
 
-
-    # Use last 4 chat turns for context (chat-only memory)
     for h in history[-4:]:
         messages.append({"role": h["role"], "content": h["content"]})
 
@@ -229,144 +170,39 @@ def generate_sql(nl: str, history: list) -> str:
     return res.choices[0].message.content.strip()
 
 
-def explain_sql(sql: str) -> str:
-    res = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[
-            {"role": "system", "content": "Explain SQL clearly for analysts."},
-            {"role": "user", "content": sql}
-        ],
-        temperature=0.2
-    )
-    return res.choices[0].message.content
-
-
-def explain_chart(df: pd.DataFrame, chart_type: str, x: str, y: str) -> str:
-    sample = df.head(5).to_csv(index=False)
-    prompt = f"""
-Explain this chart in business terms.
-Chart type: {chart_type}
-X-axis: {x}
-Y-axis: {y}
-Sample data:
-{sample}
-"""
-    res = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3
-    )
-    return res.choices[0].message.content
-
-
-def auto_chart(df: pd.DataFrame):
-    num_cols = df.select_dtypes(include="number").columns
-    cat_cols = df.select_dtypes(exclude="number").columns
-    if len(num_cols) >= 1 and len(cat_cols) >= 1:
-        return "bar", cat_cols[0], num_cols[0]
-    if len(num_cols) >= 2:
-        return "line", num_cols[0], num_cols[1]
-    return None, None, None
-
 # ============================
-# Session State
+# UI
 # ============================
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# ============================
-# Chat UI
-# ============================
 st.title("🤖 Analytics Copilot")
-st.caption("Chat with your data across multiple tables")
+st.caption("Clean, aliased analytics results")
 
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+for m in st.session_state.messages:
+    with st.chat_message(m["role"]):
+        st.markdown(m["content"])
 
 user_input = st.chat_input("Ask a question about your data")
 
 if user_input:
-    lowered = user_input.lower().strip()
     st.session_state.messages.append({"role": "user", "content": user_input})
-
-    # ============================
-    # Special chat commands (no LLM)
-    # ============================
-    if lowered in {"what tables do i have?", "list tables", "show tables"}:
-        tables = list_tables()
-        with st.chat_message("assistant"):
-            if tables:
-                st.markdown("### 📂 Available Tables")
-                for t in tables:
-                    st.markdown(f"- **{t}**")
-            else:
-                st.markdown("No tables found in the database.")
-        st.session_state.messages.append({"role": "assistant", "content": "Listed database tables"})
-        st.stop()
-
-    if lowered.startswith("describe table"):
-        table = lowered.replace("describe table", "").strip()
-        cols = describe_table(table)
-        with st.chat_message("assistant"):
-            if cols:
-                st.markdown(f"### 🧱 Schema for `{table}`")
-                for c in cols:
-                    st.markdown(f"- **{c[1]}** ({c[2]})")
-            else:
-                st.markdown(f"Table `{table}` not found.")
-        st.session_state.messages.append({"role": "assistant", "content": f"Described table {table}"})
-        st.stop()
-
-    # ============================
-    # Normal NL → SQL flow
-    # ============================
     try:
-        cache_key = semantic_key(user_input)
-
-        if cache_key in st.session_state.semantic_cache:
-            cached = st.session_state.semantic_cache[cache_key]
-            sql, df = cached["sql"], cached["df"]
-            cached_hit = True
+        key = semantic_key(user_input)
+        if key in st.session_state.semantic_cache:
+            sql, df = st.session_state.semantic_cache[key]
         else:
-            raw_sql = generate_sql(user_input, st.session_state.messages)
-
-            sql = extract_sql(raw_sql)
-            sql = sqlite_sql_fixups(sql)
-            sql = validate_sql(sql)
+            raw = generate_sql(user_input, st.session_state.messages)
+            sql = validate_sql(sqlite_sql_fixups(extract_sql(raw)))
             df = pd.read_sql(text(sql), engine)
-            st.session_state.semantic_cache[cache_key] = {"sql": sql, "df": df}
-            cached_hit = False
-
-        chart_type, x, y = auto_chart(df)
+            st.session_state.semantic_cache[key] = (sql, df)
 
         with st.chat_message("assistant"):
-            if cached_hit:
-                st.info("⚡ Loaded from cache")
-
             st.dataframe(df, use_container_width=True)
-
-            if chart_type == "bar":
-                st.bar_chart(df, x=x, y=y)
-            elif chart_type == "line":
-                st.line_chart(df[[x, y]])
-
-            with st.expander("Explain Chart"):
-                if chart_type:
-                    st.markdown(explain_chart(df, chart_type, x, y))
-                else:
-                    st.markdown("No chart explanation available")
-
             with st.expander("View SQL"):
                 st.code(sql, language="sql")
 
-            with st.expander("Explain SQL"):
-                st.markdown(explain_sql(sql))
-
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": f"Returned {len(df)} rows"
-        })
+        st.session_state.messages.append({"role": "assistant", "content": f"Returned {len(df)} rows"})
 
     except Exception as e:
         with st.chat_message("assistant"):
