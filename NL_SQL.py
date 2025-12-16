@@ -164,6 +164,22 @@ def sqlite_sql_fixups(sql: str) -> str:
     )
     return sql
 
+def extract_sql(llm_output: str) -> str:
+    """
+    Extract the first SELECT or WITH statement from LLM output.
+    """
+    match = re.search(
+        r"(with\\s+.*?select|select\\s+.*)",
+        llm_output,
+        flags=re.IGNORECASE | re.DOTALL
+    )
+
+    if not match:
+        raise ValueError("No valid SELECT query found in model output")
+
+    return match.group(0).strip()
+
+
 
 def generate_sql(nl: str, history: list) -> str:
     messages = [
@@ -300,7 +316,9 @@ if user_input:
             sql, df = cached["sql"], cached["df"]
             cached_hit = True
         else:
-            sql = generate_sql(user_input, st.session_state.messages)
+            raw_sql = generate_sql(user_input, st.session_state.messages)
+
+            sql = extract_sql(raw_sql)
             sql = sqlite_sql_fixups(sql)
             sql = validate_sql(sql)
             df = pd.read_sql(text(sql), engine)
