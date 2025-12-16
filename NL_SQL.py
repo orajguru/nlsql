@@ -146,13 +146,37 @@ def validate_sql(sql: str) -> str:
         sql += f" LIMIT {MAX_ROWS}"
     return sql
 
+def sqlite_sql_fixups(sql: str) -> str:
+    # Replace EXTRACT(YEAR FROM col) → strftime('%Y', col)
+    sql = re.sub(
+        r"EXTRACT\\s*\\(\\s*YEAR\\s+FROM\\s+([^)]+)\\)",
+        r"strftime('%Y', \\1)",
+        sql,
+        flags=re.IGNORECASE
+    )
+    return sql
+
 
 def generate_sql(nl: str, history: list) -> str:
     messages = [
-        {"role": "system", "content": "You are a senior analytics engineer generating SQL with joins."},
-        {"role": "system", "content": "Rules: Use joins based on relationships. Output only SQL. SELECT only."},
-        {"role": "system", "content": f"Schema:\n{SCHEMA_DESCRIPTION}"}
-    ]
+    {
+        "role": "system",
+        "content": (
+            "You are a senior analytics engineer generating SQL for SQLITE.\n"
+            "IMPORTANT SQLITE RULES:\n"
+            "- SQLite does NOT support EXTRACT()\n"
+            "- Use strftime('%Y', date_column) for year extraction\n"
+            "- Use strftime('%m', date_column) for month extraction\n"
+            "- Dates are stored as TEXT in YYYY-MM-DD format\n"
+            "- Output only valid SQLite SQL\n"
+            "- SELECT queries only"
+        )
+    },
+    {
+        "role": "system",
+        "content": f"Schema:\n{SCHEMA_DESCRIPTION}"
+    }
+]
 
     # Use last 4 chat turns for context (chat-only memory)
     for h in history[-4:]:
@@ -269,6 +293,7 @@ if user_input:
             cached_hit = True
         else:
             sql = generate_sql(user_input, st.session_state.messages)
+            sql = sqlite_sql_fixups(sql)
             sql = validate_sql(sql)
             df = pd.read_sql(text(sql), engine)
             st.session_state.semantic_cache[cache_key] = {"sql": sql, "df": df}
