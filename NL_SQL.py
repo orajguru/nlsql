@@ -24,6 +24,60 @@ client = Groq(api_key=GROQ_API_KEY)
 engine = create_engine("sqlite:///sample.db")
 
 # ============================
+# Initialize Database (tables + sample data)
+# ============================
+def init_db():
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS departments (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL
+            );
+        """))
+
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS employees (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                department_id INTEGER,
+                salary INTEGER,
+                joining_date DATE,
+                FOREIGN KEY(department_id) REFERENCES departments(id)
+            );
+        """))
+
+        # Seed departments if empty
+        dept_count = conn.execute(text("SELECT COUNT(*) FROM departments")).scalar()
+        if dept_count == 0:
+            conn.execute(text("""
+                INSERT INTO departments (id, name) VALUES
+                (1, 'IT'),
+                (2, 'HR'),
+                (3, 'Finance'),
+                (4, 'Operations');
+            """))
+
+        # Seed employees if empty
+        emp_count = conn.execute(text("SELECT COUNT(*) FROM employees")).scalar()
+        if emp_count == 0:
+            conn.execute(text("""
+                INSERT INTO employees (name, department_id, salary, joining_date) VALUES
+                ('Alice', 1, 120000, '2021-04-12'),
+                ('Bob', 1, 95000, '2022-06-01'),
+                ('Carol', 2, 60000, '2023-02-18'),
+                ('Dave', 3, 80000, '2020-09-10'),
+                ('Eve', 4, 70000, '2022-11-05'),
+                ('Frank', 1, 110000, '2023-01-20');
+            """))
+
+# Run DB initialization once
+init_db()
+
+# ============================
+client = Groq(api_key=GROQ_API_KEY)
+engine = create_engine("sqlite:///sample.db")
+
+# ============================
 # Schema with FK inference
 # ============================
 SCHEMA_DESCRIPTION = """
