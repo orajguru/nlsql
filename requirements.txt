@@ -1,0 +1,12 @@
+streamlit
+xmltodict
+beautifulsoup4
+openai
+lxml
+sentence-transformers
+torch
+groq
+python-dotenv
+pandas
+requests
+xlsxwriter
