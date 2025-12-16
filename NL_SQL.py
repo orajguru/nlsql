@@ -4,6 +4,7 @@ from groq import Groq
 from sqlalchemy import create_engine, text
 import os
 import hashlib
+import re
 
 # ============================
 # Configuration
