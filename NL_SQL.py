@@ -198,6 +198,7 @@ if user_input:
         else:
             raw = generate_sql(user_input, st.session_state.messages)
             sql = validate_sql(sqlite_sql_fixups(extract_sql(raw)))
+            sql = normalize_sql(sql)
             df = pd.read_sql(text(sql), engine)
             st.session_state.semantic_cache[key] = (sql, df)
 
