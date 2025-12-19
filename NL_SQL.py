@@ -130,7 +130,10 @@ def sqlite_sql_fixups(sql: str) -> str:
 
 
 def normalize_sql(sql: str) -> str:
-    return sql.strip().rstrip(";")
+    # SQLite via SQLAlchemy allows only ONE statement
+    # Remove ALL semicolons defensively
+    return re.sub(r";+", "", sql).strip()
+
 
 
 def extract_sql(text_out: str) -> str:
