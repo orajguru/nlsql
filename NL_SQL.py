@@ -137,13 +137,34 @@ def normalize_sql(sql: str) -> str:
 
 
 def extract_sql(text_out: str) -> str:
+    """
+    Extract ONLY the SQL statement from LLM output.
+    Stops at first non-SQL text.
+    """
     text_out = text_out.strip()
-    if text_out.lower().startswith(("select", "with")):
-        return text_out
-    m = re.search(r"(select\s+.+|with\s+.+)", text_out, re.I | re.S)
-    if not m:
-        raise ValueError("No valid SQL returned by model")
-    return m.group(1).strip()
+
+    # Remove markdown fences if present
+    text_out = re.sub(r"```sql|```", "", text_out, flags=re.IGNORECASE).strip()
+
+    lines = text_out.splitlines()
+    sql_lines = []
+
+    for line in lines:
+        l = line.strip().lower()
+
+        # Stop if explanation starts
+        if l.startswith(("this ", "explanation", "note:", "here ", "the query")):
+            break
+
+        sql_lines.append(line)
+
+    sql = "\n".join(sql_lines).strip()
+
+    if not sql.lower().startswith(("select", "with")):
+        raise ValueError("Model did not return pure SQL")
+
+    return sql
+
 
 
 def generate_sql(nl: str, history: list) -> str:
