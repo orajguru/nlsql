@@ -133,7 +133,9 @@ def sqlite_sql_fixups(sql: str) -> str:
         sql,
         flags=re.IGNORECASE
     )
-
+def normalize_sql(sql: str) -> str:
+    # Remove trailing semicolons and extra whitespace
+    return sql.strip().rstrip(";")
 
 def extract_sql(text_out: str) -> str:
     text_out = text_out.strip()
