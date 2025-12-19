@@ -4,6 +4,7 @@ from groq import Groq
 from sqlalchemy import create_engine, text
 import hashlib
 import re
+from graphviz import Digraph
 
 # ============================
 # Configuration
@@ -28,7 +29,6 @@ engine = create_engine("sqlite:///sample.db")
 # ============================
 def init_db():
     with engine.begin() as conn:
-        # Department table with prefixed columns
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS dim_department (
                 dept_id INTEGER PRIMARY KEY,
@@ -36,7 +36,6 @@ def init_db():
             );
         """))
 
-        # Employee table with prefixed columns
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS fact_employee (
                 emp_id INTEGER PRIMARY KEY,
@@ -48,17 +47,12 @@ def init_db():
             );
         """))
 
-        # Seed departments
         if conn.execute(text("SELECT COUNT(*) FROM dim_department")).scalar() == 0:
             conn.execute(text("""
                 INSERT INTO dim_department (dept_id, department_name) VALUES
-                (1, 'IT'),
-                (2, 'HR'),
-                (3, 'Finance'),
-                (4, 'Operations');
+                (1, 'IT'), (2, 'HR'), (3, 'Finance'), (4, 'Operations');
             """))
 
-        # Seed employees
         if conn.execute(text("SELECT COUNT(*) FROM fact_employee")).scalar() == 0:
             conn.execute(text("""
                 INSERT INTO fact_employee (employee_name, dept_id, employee_salary, joining_date) VALUES
@@ -133,9 +127,11 @@ def sqlite_sql_fixups(sql: str) -> str:
         sql,
         flags=re.IGNORECASE
     )
+
+
 def normalize_sql(sql: str) -> str:
-    # Remove trailing semicolons and extra whitespace
     return sql.strip().rstrip(";")
+
 
 def extract_sql(text_out: str) -> str:
     text_out = text_out.strip()
@@ -173,6 +169,41 @@ def generate_sql(nl: str, history: list) -> str:
     )
     return res.choices[0].message.content.strip()
 
+# ============================
+# ER Diagram
+# ============================
+def render_er_diagram():
+    dot = Digraph(graph_attr={"rankdir": "LR"})
+
+    dot.node(
+        "dim_department",
+        """<
+        <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0">
+            <TR><TD BGCOLOR="#D6EAF8"><B>dim_department</B></TD></TR>
+            <TR><TD>dept_id (PK)</TD></TR>
+            <TR><TD>department_name</TD></TR>
+        </TABLE>
+        >""",
+        shape="plaintext"
+    )
+
+    dot.node(
+        "fact_employee",
+        """<
+        <TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0">
+            <TR><TD BGCOLOR="#D5F5E3"><B>fact_employee</B></TD></TR>
+            <TR><TD>emp_id (PK)</TD></TR>
+            <TR><TD>employee_name</TD></TR>
+            <TR><TD>employee_salary</TD></TR>
+            <TR><TD>joining_date</TD></TR>
+            <TR><TD>dept_id (FK)</TD></TR>
+        </TABLE>
+        >""",
+        shape="plaintext"
+    )
+
+    dot.edge("fact_employee", "dim_department", label="dept_id → dept_id")
+    return dot
 
 # ============================
 # UI
@@ -180,8 +211,17 @@ def generate_sql(nl: str, history: list) -> str:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+with st.sidebar:
+    st.header("📐 Data Model")
+    show_er = st.checkbox("View ER Diagram")
+
 st.title("🤖 Analytics Copilot")
 st.caption("No column clashes by design")
+
+if show_er:
+    st.subheader("📊 Entity Relationship Diagram")
+    st.graphviz_chart(render_er_diagram())
+    st.divider()
 
 for m in st.session_state.messages:
     with st.chat_message(m["role"]):
@@ -197,7 +237,9 @@ if user_input:
             sql, df = st.session_state.semantic_cache[key]
         else:
             raw = generate_sql(user_input, st.session_state.messages)
-            sql = validate_sql(sqlite_sql_fixups(extract_sql(raw)))
+            sql = extract_sql(raw)
+            sql = sqlite_sql_fixups(sql)
+            sql = validate_sql(sql)
             sql = normalize_sql(sql)
             df = pd.read_sql(text(sql), engine)
             st.session_state.semantic_cache[key] = (sql, df)
